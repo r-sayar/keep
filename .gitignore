@@ -1,0 +1,18 @@
+# Vercel
+.vercel
+.env*.local
+
+# macOS
+.DS_Store
+
+# Editor
+.idea/
+.vscode/
+
+# Local user data — should never be committed
+keep-takeout/
+keep-attachments/
+*.zip
+
+# Optional local config override (see config.example.js)
+config.local.js

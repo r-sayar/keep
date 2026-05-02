@@ -1,0 +1,573 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+<meta name="theme-color" content="#fbbc04" />
+<link rel="manifest" href="/manifest.json" />
+<link rel="icon" href="/icon.svg" type="image/svg+xml" />
+<link rel="apple-touch-icon" href="/icon.svg" />
+<title>Keep</title>
+<style>
+  :root {
+    --bg: #fafafa;
+    --fg: #202124;
+    --muted: #5f6368;
+    --border: #e0e0e0;
+    --accent: #fbbc04;
+    --card: #ffffff;
+    --hover: rgba(0,0,0,0.04);
+    --link: #1a73e8;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--fg);
+    min-height: 100vh;
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+  header {
+    padding: 14px 20px;
+    border-bottom: 1px solid var(--border);
+    background: #fff;
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding-top: calc(14px + env(safe-area-inset-top));
+    flex-wrap: wrap;
+  }
+  header h1 {
+    margin: 0;
+    font-size: 20px;
+    font-weight: 500;
+    color: var(--muted);
+  }
+  header h1 span { color: var(--accent); }
+  .search-wrap {
+    flex: 1 1 200px;
+    min-width: 200px;
+    max-width: 480px;
+    position: relative;
+  }
+  .search-wrap input {
+    width: 100%;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 8px 12px 8px 32px;
+    font-family: inherit;
+    font-size: 14px;
+    background: #f1f3f4;
+    outline: none;
+  }
+  .search-wrap input:focus { background: #fff; border-color: var(--accent); }
+  .search-wrap::before {
+    content: "⌕";
+    position: absolute;
+    left: 10px;
+    top: 50%;
+    transform: translateY(-50%);
+    color: var(--muted);
+    font-size: 16px;
+    pointer-events: none;
+  }
+  .actions { display: flex; gap: 8px; align-items: center; }
+  main {
+    max-width: 720px;
+    margin: 0 auto;
+    padding: 20px 16px 80px;
+  }
+  .composer {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 12px 16px;
+    margin-bottom: 16px;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.04);
+  }
+  .composer input, .composer textarea {
+    width: 100%;
+    border: none;
+    outline: none;
+    font-family: inherit;
+    font-size: 14px;
+    color: var(--fg);
+    background: transparent;
+    resize: none;
+  }
+  .composer input {
+    font-weight: 500;
+    font-size: 16px;
+    margin-bottom: 8px;
+  }
+  .composer textarea { min-height: 40px; }
+  .composer-actions {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-top: 8px;
+  }
+  .composer-hint {
+    font-size: 11px;
+    color: var(--muted);
+  }
+  kbd {
+    font-family: -apple-system, "SF Mono", Menlo, monospace;
+    font-size: 10px;
+    background: #f1f3f4;
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    padding: 1px 5px;
+  }
+  .toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin: 0 4px 12px;
+    font-size: 12px;
+    color: var(--muted);
+  }
+  .toolbar label {
+    cursor: pointer;
+    user-select: none;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  button {
+    border: none;
+    background: transparent;
+    font-family: inherit;
+    font-size: 14px;
+    color: var(--muted);
+    cursor: pointer;
+    padding: 8px 14px;
+    border-radius: 6px;
+    transition: background 0.1s;
+  }
+  button:hover { background: var(--hover); }
+  button.primary {
+    color: var(--fg);
+    font-weight: 500;
+    border: 1px solid var(--border);
+  }
+  button.icon { padding: 8px 10px; font-size: 16px; }
+  .list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .note {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px 16px;
+    transition: box-shadow 0.15s;
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .note.archived {
+    background: #f6f8fa;
+    border-style: dashed;
+  }
+  .note.pinned::before {
+    content: "📌";
+    position: absolute;
+    top: 8px;
+    right: 32px;
+    font-size: 12px;
+    opacity: 0.7;
+  }
+  .note:hover { box-shadow: 0 2px 6px rgba(0,0,0,0.08); }
+  .note h2 {
+    margin: 0;
+    font-size: 15px;
+    font-weight: 600;
+    word-wrap: break-word;
+    padding-right: 32px;
+  }
+  .note p {
+    margin: 0;
+    font-size: 14px;
+    color: var(--fg);
+    white-space: pre-wrap;
+    word-wrap: break-word;
+    overflow: hidden;
+    display: -webkit-box;
+    -webkit-line-clamp: 12;
+    -webkit-box-orient: vertical;
+  }
+  .note .meta {
+    font-size: 11px;
+    color: var(--muted);
+    margin-top: 6px;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+  }
+  .note .source {
+    color: var(--link);
+    text-decoration: none;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 240px;
+  }
+  .note .source:hover { text-decoration: underline; }
+  .chip {
+    background: #f1f3f4;
+    border-radius: 10px;
+    padding: 1px 8px;
+    font-size: 10px;
+    color: var(--muted);
+  }
+  .note .delete {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    opacity: 0;
+    font-size: 14px;
+    padding: 4px 10px;
+    color: var(--muted);
+  }
+  .note:hover .delete, .note:focus-within .delete { opacity: 1; }
+  @media (hover: none) { .note .delete { opacity: 1; } }
+  .empty {
+    text-align: center;
+    color: var(--muted);
+    padding: 48px 0;
+    font-size: 14px;
+  }
+  .load-more {
+    text-align: center;
+    margin: 16px 0;
+  }
+  .toast {
+    position: fixed;
+    bottom: calc(20px + env(safe-area-inset-bottom));
+    left: 50%;
+    transform: translateX(-50%);
+    background: #202124;
+    color: #fff;
+    padding: 10px 16px;
+    border-radius: 6px;
+    font-size: 13px;
+    opacity: 0;
+    transition: opacity 0.2s;
+    pointer-events: none;
+    z-index: 100;
+  }
+  .toast.show { opacity: 1; }
+</style>
+</head>
+<body>
+  <header>
+    <h1>Ke<span>e</span>p</h1>
+    <div class="search-wrap">
+      <input id="search" type="search" placeholder="Search notes…" />
+    </div>
+    <div class="actions">
+      <button class="primary" id="export">Send to Claude</button>
+    </div>
+  </header>
+  <main>
+    <div class="composer">
+      <input id="title" placeholder="Title" />
+      <textarea id="body" placeholder="Take a note..." rows="1" autofocus></textarea>
+      <div class="composer-actions">
+        <span class="composer-hint"><kbd>⌘</kbd>+<kbd>Enter</kbd> to save</span>
+        <button class="primary" id="add">Add</button>
+      </div>
+    </div>
+    <div class="toolbar">
+      <span id="count">…</span>
+      <label><input type="checkbox" id="show-archived" /> Show archived</label>
+    </div>
+    <div id="notes" class="list"></div>
+    <div class="load-more">
+      <button id="load-more" hidden>Load more</button>
+    </div>
+    <div id="empty" class="empty" hidden>No notes.</div>
+  </main>
+  <div class="toast" id="toast"></div>
+
+<script type="module">
+  import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+
+  const SUPABASE_URL = "https://sywglobxvtxayvelhunb.supabase.co";
+  const SUPABASE_KEY = "sb_publishable_92UpBhuxnldvBH5hXGiy7Q_voxEzcsc";
+  const USER_ID = "default";
+  const PAGE_SIZE = 50;
+
+  const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
+
+  // === Storage layer ===
+  // list({search, archived, offset, limit}) → {rows, total}
+  const store = {
+    async list({ search = "", archived = false, offset = 0, limit = PAGE_SIZE } = {}) {
+      let q = supabase
+        .from("notes")
+        .select("*", { count: "exact" })
+        .eq("user_id", USER_ID);
+      if (!archived) q = q.eq("archived", false);
+      if (search.trim()) {
+        const s = search.trim().replace(/[%,]/g, " ");
+        q = q.or(`title.ilike.%${s}%,body.ilike.%${s}%`);
+      }
+      // Pinned first, then newest
+      q = q
+        .order("pinned", { ascending: false })
+        .order("created_at", { ascending: false })
+        .range(offset, offset + limit - 1);
+      const { data, error, count } = await q;
+      if (error) {
+        console.error(error);
+        toast("Failed to load notes");
+        return { rows: [], total: 0 };
+      }
+      return { rows: data, total: count };
+    },
+    async add({ title, body }) {
+      const { data, error } = await supabase
+        .from("notes")
+        .insert({ user_id: USER_ID, title, body })
+        .select()
+        .single();
+      if (error) {
+        console.error(error);
+        toast("Failed to save note");
+        return null;
+      }
+      return data;
+    },
+    async remove(id) {
+      const { error } = await supabase.from("notes").delete().eq("id", id);
+      if (error) {
+        console.error(error);
+        toast("Failed to delete note");
+      }
+    },
+  };
+
+  // === DOM ===
+  const titleEl = document.getElementById("title");
+  const bodyEl = document.getElementById("body");
+  const addBtn = document.getElementById("add");
+  const exportBtn = document.getElementById("export");
+  const searchEl = document.getElementById("search");
+  const archivedEl = document.getElementById("show-archived");
+  const notesEl = document.getElementById("notes");
+  const emptyEl = document.getElementById("empty");
+  const countEl = document.getElementById("count");
+  const loadMoreBtn = document.getElementById("load-more");
+  const toastEl = document.getElementById("toast");
+
+  // === State ===
+  const state = { search: "", archived: false, offset: 0, total: 0 };
+
+  const autoGrow = (el) => {
+    el.style.height = "auto";
+    el.style.height = el.scrollHeight + "px";
+  };
+  bodyEl.addEventListener("input", () => autoGrow(bodyEl));
+
+  const toast = (msg) => {
+    toastEl.textContent = msg;
+    toastEl.classList.add("show");
+    setTimeout(() => toastEl.classList.remove("show"), 1800);
+  };
+
+  const fmtDate = (iso) => {
+    const d = new Date(iso);
+    const now = new Date();
+    const sameYear = d.getFullYear() === now.getFullYear();
+    return d.toLocaleString(undefined, {
+      year: sameYear ? undefined : "numeric",
+      month: "short",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  };
+
+  const renderNote = (n) => {
+    const card = document.createElement("article");
+    card.className = "note";
+    if (n.archived) card.classList.add("archived");
+    if (n.pinned) card.classList.add("pinned");
+
+    if (n.title) {
+      const h = document.createElement("h2");
+      h.textContent = n.title;
+      card.appendChild(h);
+    }
+    if (n.body) {
+      const p = document.createElement("p");
+      p.textContent = n.body;
+      card.appendChild(p);
+    }
+    const meta = document.createElement("div");
+    meta.className = "meta";
+    const date = document.createElement("span");
+    date.textContent = fmtDate(n.created_at);
+    meta.appendChild(date);
+    for (const label of n.labels || []) {
+      const chip = document.createElement("span");
+      chip.className = "chip";
+      chip.textContent = label;
+      meta.appendChild(chip);
+    }
+    if (n.source_url) {
+      const a = document.createElement("a");
+      a.className = "source";
+      a.href = n.source_url;
+      a.target = "_blank";
+      a.rel = "noopener noreferrer";
+      try {
+        a.textContent = new URL(n.source_url).hostname.replace(/^www\./, "");
+      } catch {
+        a.textContent = n.source_url;
+      }
+      meta.appendChild(a);
+    }
+    card.appendChild(meta);
+
+    const del = document.createElement("button");
+    del.className = "delete";
+    del.textContent = "✕";
+    del.setAttribute("aria-label", "Delete note");
+    del.onclick = async (e) => {
+      e.stopPropagation();
+      if (!confirm("Delete this note?")) return;
+      await store.remove(n.id);
+      await refresh();
+    };
+    card.appendChild(del);
+    return card;
+  };
+
+  const setCount = () => {
+    const shown = Math.min(state.offset + PAGE_SIZE, state.total);
+    countEl.textContent = state.total === 0
+      ? "0 notes"
+      : `Showing ${Math.min(notesEl.children.length, state.total)} of ${state.total}`;
+  };
+
+  // Load a page; if append=false, replace the list
+  const loadPage = async ({ append }) => {
+    const { rows, total } = await store.list({
+      search: state.search,
+      archived: state.archived,
+      offset: state.offset,
+      limit: PAGE_SIZE,
+    });
+    state.total = total;
+    if (!append) notesEl.innerHTML = "";
+    for (const n of rows) notesEl.appendChild(renderNote(n));
+    emptyEl.hidden = state.total > 0 || notesEl.children.length > 0;
+    loadMoreBtn.hidden = notesEl.children.length >= state.total;
+    setCount();
+  };
+
+  // Refresh from offset 0 (e.g. after add/delete/search/filter change)
+  const refresh = async () => {
+    state.offset = 0;
+    await loadPage({ append: false });
+  };
+
+  loadMoreBtn.onclick = async () => {
+    state.offset += PAGE_SIZE;
+    await loadPage({ append: true });
+  };
+
+  const add = async () => {
+    const title = titleEl.value.trim();
+    const body = bodyEl.value.trim();
+    if (!title && !body) return;
+    await store.add({ title, body });
+    titleEl.value = "";
+    bodyEl.value = "";
+    autoGrow(bodyEl);
+    await refresh();
+  };
+
+  const sendToClaude = async () => {
+    try {
+      await navigator.clipboard.writeText("/keep-to-csv");
+      toast(`Open Claude Desktop → /keep-to-csv (copied)`);
+    } catch {
+      toast(`Open Claude Desktop and run /keep-to-csv`);
+    }
+  };
+
+  // Debounced search
+  let searchTimer = null;
+  searchEl.addEventListener("input", () => {
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(() => {
+      state.search = searchEl.value;
+      refresh();
+    }, 200);
+  });
+
+  archivedEl.addEventListener("change", () => {
+    state.archived = archivedEl.checked;
+    refresh();
+  });
+
+  addBtn.onclick = add;
+  exportBtn.onclick = sendToClaude;
+  bodyEl.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) add();
+  });
+  titleEl.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      bodyEl.focus();
+    }
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+    const t = e.target;
+    if (t.tagName === "INPUT" || t.tagName === "TEXTAREA") return;
+    if (e.key === "n") {
+      e.preventDefault();
+      bodyEl.focus();
+    } else if (e.key === "/") {
+      e.preventDefault();
+      searchEl.focus();
+    }
+  });
+
+  // Share-target deep link: ?text=...&title=...
+  const params = new URLSearchParams(location.search);
+  const sharedText = params.get("text") || params.get("body");
+  const sharedTitle = params.get("title");
+  if (sharedText || sharedTitle) {
+    if (sharedTitle) titleEl.value = sharedTitle;
+    if (sharedText) {
+      bodyEl.value = sharedText;
+      autoGrow(bodyEl);
+    }
+    history.replaceState({}, "", location.pathname);
+    bodyEl.focus();
+  } else {
+    bodyEl.focus();
+  }
+
+  refresh();
+
+  if ("serviceWorker" in navigator) {
+    navigator.serviceWorker.register("/sw.js").catch(() => {});
+  }
+</script>
+</body>
+</html>
