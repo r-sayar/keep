@@ -8,44 +8,53 @@ allowed-tools: [Read, Write, Bash]
 
 Pulls the user's notes from Supabase (the Keep web app's backend) and writes them to a CSV the user can open in any spreadsheet tool.
 
-## Credentials
+## Project
 
-Hardcoded — these are publishable keys, safe to embed:
-
-- `SUPABASE_URL`: `https://sywglobxvtxayvelhunb.supabase.co`
-- `SUPABASE_KEY`: `sb_publishable_92UpBhuxnldvBH5hXGiy7Q_voxEzcsc`
-
-The `notes` table has RLS allowing the anon/publishable key to read rows where `user_id='default'`.
+- Supabase project_id: `sywglobxvtxayvelhunb`
+- Table: `public.notes`
+- The notes table is RLS-protected. Anonymous reads return empty. To fetch, use **one of**:
+  1. **The Supabase MCP** (preferred — already connected in Claude Desktop / Claude Code). Tool: `execute_sql`. Bypasses RLS as the project owner.
+  2. **A service role key**, if available at `~/.config/keep/service_key` (a single line, the `service_role` secret from Supabase → Settings → API). Used as both the `apikey` and `Authorization: Bearer` header in curl.
 
 ## Process
 
-1. **Fetch** all notes with curl (sorted newest first):
+1. **Fetch** all notes (newest first):
 
+   **Preferred (via Supabase MCP):**
+   ```
+   execute_sql(project_id="sywglobxvtxayvelhunb", query="
+     select id, created_at, title, body
+     from public.notes
+     where archived = false
+     order by created_at desc
+   ")
+   ```
+
+   **Fallback (curl with service role key):**
    ```bash
+   KEY=$(cat ~/.config/keep/service_key)
    curl -s \
-     "https://sywglobxvtxayvelhunb.supabase.co/rest/v1/notes?select=id,created_at,title,body&user_id=eq.default&order=created_at.desc" \
-     -H "apikey: sb_publishable_92UpBhuxnldvBH5hXGiy7Q_voxEzcsc" \
-     -H "Authorization: Bearer sb_publishable_92UpBhuxnldvBH5hXGiy7Q_voxEzcsc"
+     "https://sywglobxvtxayvelhunb.supabase.co/rest/v1/notes?select=id,created_at,title,body&archived=eq.false&order=created_at.desc" \
+     -H "apikey: $KEY" \
+     -H "Authorization: Bearer $KEY"
    ```
 
 2. **Parse** the JSON response. If empty, tell the user "No notes" and stop.
 
 3. **Write CSV** to `~/Downloads/keep-notes-YYYY-MM-DD.csv` with columns: `id,created_at,title,body`.
    - RFC 4180 escaping: wrap every field in `"..."`, double internal quotes, newlines inside quoted fields are fine.
-   - Use a small Python or jq script — don't roll string concatenation by hand.
+   - Use a small Python script — don't roll string concatenation by hand.
 
 4. **Confirm** to the user: row count, absolute path. Offer `open <path>` to launch it.
 
-## Reference Python (one-liner you can adapt)
+## Reference Python
+
+If you fetched via the Supabase MCP, save its result to a temp file as JSON, then:
 
 ```python
-import json, csv, sys, pathlib, datetime, urllib.request
+import json, csv, sys, pathlib, datetime
 
-URL = "https://sywglobxvtxayvelhunb.supabase.co/rest/v1/notes?select=id,created_at,title,body&user_id=eq.default&order=created_at.desc"
-KEY = "sb_publishable_92UpBhuxnldvBH5hXGiy7Q_voxEzcsc"
-
-req = urllib.request.Request(URL, headers={"apikey": KEY, "Authorization": f"Bearer {KEY}"})
-notes = json.loads(urllib.request.urlopen(req).read())
+notes = json.loads(pathlib.Path("/tmp/keep_notes.json").read_text())
 if not notes:
     print("No notes"); sys.exit(0)
 

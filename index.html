@@ -266,15 +266,104 @@
     z-index: 100;
   }
   .toast.show { opacity: 1; }
+  /* ===== Auth ===== */
+  .auth-wrap {
+    max-width: 380px;
+    margin: 80px auto;
+    padding: 32px 28px;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.06);
+    text-align: center;
+  }
+  .auth-wrap h2 {
+    margin: 0 0 8px;
+    font-size: 22px;
+    font-weight: 500;
+  }
+  .auth-wrap h2 span { color: var(--accent); }
+  .auth-wrap p {
+    margin: 0 0 20px;
+    color: var(--muted);
+    font-size: 13px;
+  }
+  .auth-wrap input[type="email"] {
+    width: 100%;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 14px;
+    font-family: inherit;
+    font-size: 14px;
+    outline: none;
+    margin-bottom: 12px;
+  }
+  .auth-wrap input[type="email"]:focus {
+    border-color: var(--accent);
+  }
+  .auth-wrap button {
+    width: 100%;
+    padding: 10px 14px;
+    font-weight: 500;
+    color: var(--fg);
+    border: 1px solid var(--border);
+  }
+  .auth-msg {
+    font-size: 12px;
+    margin-top: 14px;
+    color: var(--muted);
+    min-height: 16px;
+  }
+  .auth-msg.ok { color: #137333; }
+  .auth-msg.err { color: #c5221f; }
+  .user-pill {
+    font-size: 12px;
+    color: var(--muted);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .user-pill button {
+    padding: 4px 8px;
+    font-size: 12px;
+  }
+  body.unauth header,
+  body.unauth main,
+  body.loading header,
+  body.loading main { display: none; }
+  body:not(.unauth):not(.loading) #auth-screen { display: none; }
+  body.loading #loading-screen { display: flex; }
+  body:not(.loading) #loading-screen { display: none; }
+  #loading-screen {
+    align-items: center;
+    justify-content: center;
+    height: 100vh;
+    color: var(--muted);
+    font-size: 14px;
+  }
 </style>
 </head>
-<body>
+<body class="loading">
+  <div id="loading-screen">Loading…</div>
+  <div id="auth-screen" class="auth-wrap">
+    <h2>Ke<span>e</span>p</h2>
+    <p>Sign in with your email — we'll send you a one-tap login link.</p>
+    <form id="auth-form">
+      <input id="email" type="email" placeholder="you@example.com" required autocomplete="email" />
+      <button class="primary" type="submit" id="auth-submit">Send login link</button>
+    </form>
+    <div id="auth-msg" class="auth-msg"></div>
+  </div>
   <header>
     <h1>Ke<span>e</span>p</h1>
     <div class="search-wrap">
       <input id="search" type="search" placeholder="Search notes…" />
     </div>
     <div class="actions">
+      <span class="user-pill">
+        <span id="user-email"></span>
+        <button id="logout" title="Sign out">⎋</button>
+      </span>
       <button class="primary" id="export">Send to Claude</button>
     </div>
   </header>
@@ -304,13 +393,16 @@
 
   const SUPABASE_URL = "https://sywglobxvtxayvelhunb.supabase.co";
   const SUPABASE_KEY = "sb_publishable_92UpBhuxnldvBH5hXGiy7Q_voxEzcsc";
-  const USER_ID = "default";
   const PAGE_SIZE = 50;
 
   const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
+  // Auth state — set after sign-in
+  let USER_ID = null;
+  let USER_EMAIL = null;
 
   // === Storage layer ===
-  // list({search, archived, offset, limit}) → {rows, total}
+  // RLS enforces user_id = auth.uid() server-side, so we don't need to
+  // .eq() on user_id for security — but doing so still benefits the index.
   const store = {
     async list({ search = "", archived = false, offset = 0, limit = PAGE_SIZE } = {}) {
       let q = supabase
@@ -322,7 +414,6 @@
         const s = search.trim().replace(/[%,]/g, " ");
         q = q.or(`title.ilike.%${s}%,body.ilike.%${s}%`);
       }
-      // Pinned first, then newest
       q = q
         .order("pinned", { ascending: false })
         .order("created_at", { ascending: false })
@@ -547,23 +638,82 @@
     }
   });
 
-  // Share-target deep link: ?text=...&title=...
-  const params = new URLSearchParams(location.search);
-  const sharedText = params.get("text") || params.get("body");
-  const sharedTitle = params.get("title");
-  if (sharedText || sharedTitle) {
-    if (sharedTitle) titleEl.value = sharedTitle;
-    if (sharedText) {
-      bodyEl.value = sharedText;
-      autoGrow(bodyEl);
-    }
-    history.replaceState({}, "", location.pathname);
-    bodyEl.focus();
-  } else {
-    bodyEl.focus();
-  }
+  // === Auth ===
+  const authForm = document.getElementById("auth-form");
+  const emailInput = document.getElementById("email");
+  const authSubmit = document.getElementById("auth-submit");
+  const authMsg = document.getElementById("auth-msg");
+  const userEmailEl = document.getElementById("user-email");
+  const logoutBtn = document.getElementById("logout");
 
-  refresh();
+  const setAuthMsg = (text, kind = "") => {
+    authMsg.textContent = text;
+    authMsg.className = "auth-msg " + kind;
+  };
+
+  authForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const email = emailInput.value.trim();
+    if (!email) return;
+    authSubmit.disabled = true;
+    setAuthMsg("Sending…");
+    const { error } = await supabase.auth.signInWithOtp({
+      email,
+      options: { emailRedirectTo: location.origin + "/" },
+    });
+    authSubmit.disabled = false;
+    if (error) {
+      setAuthMsg(error.message, "err");
+    } else {
+      setAuthMsg(`Check ${email} — click the link to sign in.`, "ok");
+    }
+  });
+
+  logoutBtn.addEventListener("click", async () => {
+    await supabase.auth.signOut();
+    USER_ID = null;
+    USER_EMAIL = null;
+    document.body.classList.add("unauth");
+    notesEl.innerHTML = "";
+  });
+
+  const onSession = async (session) => {
+    if (session && session.user) {
+      USER_ID = session.user.id;
+      USER_EMAIL = session.user.email;
+      userEmailEl.textContent = USER_EMAIL;
+      document.body.classList.remove("unauth", "loading");
+
+      // Share-target deep link
+      const params = new URLSearchParams(location.search);
+      const sharedText = params.get("text") || params.get("body");
+      const sharedTitle = params.get("title");
+      if (sharedText || sharedTitle) {
+        if (sharedTitle) titleEl.value = sharedTitle;
+        if (sharedText) {
+          bodyEl.value = sharedText;
+          autoGrow(bodyEl);
+        }
+        history.replaceState({}, "", location.pathname);
+      }
+      bodyEl.focus();
+      await refresh();
+    } else {
+      USER_ID = null;
+      USER_EMAIL = null;
+      document.body.classList.remove("loading");
+      document.body.classList.add("unauth");
+    }
+  };
+
+  // Initial session check (handles magic-link callback in URL hash too)
+  const { data: { session } } = await supabase.auth.getSession();
+  await onSession(session);
+
+  // React to sign-in/out events
+  supabase.auth.onAuthStateChange((_event, session) => {
+    onSession(session);
+  });
 
   if ("serviceWorker" in navigator) {
     navigator.serviceWorker.register("/sw.js").catch(() => {});

@@ -10,6 +10,7 @@ A minimal, fast note-taking PWA backed by Supabase. Installable on desktop and A
 
 ## Features
 
+- **Email magic-link login** (Supabase Auth) — multi-user, RLS-enforced; each user only sees their own notes
 - **List view** with composer at top, newest-first
 - **Auto-focus** the note field on open — start typing immediately
 - **Search** with server-side `ILIKE` over title + body, backed by a pg_trgm trigram index (instant on 4000+ notes)
@@ -75,17 +76,22 @@ A minimal, fast note-taking PWA backed by Supabase. Installable on desktop and A
 
    alter table public.notes enable row level security;
 
-   -- Single-user mode: anon/publishable key has full CRUD on user_id='default'.
-   -- For multi-user, replace this policy with auth.uid()-based rules.
-   create policy "anon all on default user"
+   -- Multi-user mode: each authenticated user can CRUD only their own rows.
+   -- user_id is the Supabase auth.uid() as text.
+   create policy "auth users own their notes"
      on public.notes
      for all
-     to anon
-     using (user_id = 'default')
-     with check (user_id = 'default');
+     to authenticated
+     using (auth.uid()::text = user_id)
+     with check (auth.uid()::text = user_id);
    ```
 
-4. In `index.html`, replace the two constants near the top of `<script type="module">`:
+4. **URL config (required)** — Authentication → URL Configuration:
+   - **Site URL**: `https://YOUR_APP.vercel.app`
+   - **Redirect URLs**: add `https://YOUR_APP.vercel.app/**`
+   - For local dev also add `http://localhost:8766/**`
+
+5. In `index.html`, replace the two constants near the top of `<script type="module">`:
 
    ```js
    const SUPABASE_URL = "https://YOUR_PROJECT.supabase.co";
@@ -226,7 +232,7 @@ What gets imported:
 - [x] Search, pagination, archive toggle
 - [x] Google Keep takeout import
 - [x] Attachment path footers
-- [ ] Multi-user (Supabase Auth + per-user RLS)
+- [x] Multi-user (Supabase Auth magic link + per-user RLS)
 - [ ] Image attachments uploaded to Supabase Storage instead of local-disk references
 - [ ] Inline edit + reorder
 - [ ] Color tagging UI
