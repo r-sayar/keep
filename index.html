@@ -266,6 +266,51 @@
     z-index: 100;
   }
   .toast.show { opacity: 1; }
+  /* ===== Edit mode ===== */
+  .note { cursor: text; }
+  .note.editing {
+    background: #fffceb;
+    border-color: var(--accent);
+    cursor: default;
+  }
+  .note.editing .delete { display: none; }
+  .note.editing input.edit-title,
+  .note.editing textarea.edit-body {
+    width: 100%;
+    border: none;
+    background: transparent;
+    outline: none;
+    font-family: inherit;
+    color: var(--fg);
+    padding: 0;
+    margin: 0 0 4px;
+    resize: none;
+  }
+  .note.editing input.edit-title {
+    font-size: 15px;
+    font-weight: 600;
+  }
+  .note.editing textarea.edit-body {
+    font-size: 14px;
+    min-height: 60px;
+    line-height: 1.4;
+  }
+  .edit-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 4px;
+    margin-top: 8px;
+  }
+  .edit-actions button {
+    padding: 4px 12px;
+    font-size: 12px;
+    border-radius: 4px;
+  }
+  .edit-actions button.primary {
+    border: 1px solid var(--border);
+    color: var(--fg);
+    font-weight: 500;
+  }
   /* ===== Auth ===== */
   .auth-wrap {
     max-width: 380px;
@@ -393,21 +438,38 @@
 
   const SUPABASE_URL = "https://sywglobxvtxayvelhunb.supabase.co";
   const SUPABASE_KEY = "sb_publishable_92UpBhuxnldvBH5hXGiy7Q_voxEzcsc";
-  const PAGE_SIZE = 50;
+  const PAGE_SIZE = 30;
 
   const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
   // Auth state — set after sign-in
   let USER_ID = null;
   let USER_EMAIL = null;
 
+  // === Cache (stale-while-revalidate) ===
+  // Render last seen page from localStorage instantly on load,
+  // then refresh from server in the background.
+  const cacheKey = () => `keep_cache_${USER_ID}_${state?.archived ? "1" : "0"}`;
+  const saveCache = (rows, total) => {
+    if (!USER_ID) return;
+    try { localStorage.setItem(cacheKey(), JSON.stringify({ rows, total, t: Date.now() })); } catch {}
+  };
+  const loadCache = () => {
+    if (!USER_ID) return null;
+    try { return JSON.parse(localStorage.getItem(cacheKey()) || "null"); } catch { return null; }
+  };
+
   // === Storage layer ===
   // RLS enforces user_id = auth.uid() server-side, so we don't need to
   // .eq() on user_id for security — but doing so still benefits the index.
   const store = {
     async list({ search = "", archived = false, offset = 0, limit = PAGE_SIZE } = {}) {
+      // For unfiltered queries, use Postgres planner estimate (instant).
+      // For search, skip count entirely — we'll show "Load more" if rows
+      // arrive at full page size and let the user paginate.
+      const useCount = !search.trim();
       let q = supabase
         .from("notes")
-        .select("*", { count: "exact" })
+        .select("*", useCount ? { count: "estimated" } : {})
         .eq("user_id", USER_ID);
       if (!archived) q = q.eq("archived", false);
       if (search.trim()) {
@@ -422,9 +484,13 @@
       if (error) {
         console.error(error);
         toast("Failed to load notes");
-        return { rows: [], total: 0 };
+        return { rows: [], total: 0, estimated: false };
       }
-      return { rows: data, total: count };
+      return {
+        rows: data,
+        total: useCount ? (count ?? data.length) : data.length,
+        estimated: useCount,
+      };
     },
     async add({ title, body }) {
       const { data, error } = await supabase
@@ -438,6 +504,18 @@
         return null;
       }
       return data;
+    },
+    async update(id, fields) {
+      const { error } = await supabase
+        .from("notes")
+        .update({ ...fields, updated_at: new Date().toISOString() })
+        .eq("id", id);
+      if (error) {
+        console.error(error);
+        toast("Failed to save changes");
+        return false;
+      }
+      return true;
     },
     async remove(id) {
       const { error } = await supabase.from("notes").delete().eq("id", id);
@@ -542,14 +620,111 @@
       await refresh();
     };
     card.appendChild(del);
+
+    // Click anywhere on the card → edit (except links and delete button)
+    card.addEventListener("click", (e) => {
+      if (e.target.closest("a, .delete, .edit-actions")) return;
+      enterEditMode(card, n);
+    });
     return card;
   };
 
+  // Inline edit: replace the card's content with title/body inputs.
+  const enterEditMode = (card, n) => {
+    if (card.classList.contains("editing")) return;
+    card.classList.add("editing");
+    card.innerHTML = "";
+
+    const titleInput = document.createElement("input");
+    titleInput.className = "edit-title";
+    titleInput.placeholder = "Title";
+    titleInput.value = n.title || "";
+    card.appendChild(titleInput);
+
+    const bodyArea = document.createElement("textarea");
+    bodyArea.className = "edit-body";
+    bodyArea.placeholder = "Note…";
+    bodyArea.value = n.body || "";
+    card.appendChild(bodyArea);
+
+    // Auto-grow textarea
+    const grow = () => {
+      bodyArea.style.height = "auto";
+      bodyArea.style.height = bodyArea.scrollHeight + "px";
+    };
+    bodyArea.addEventListener("input", grow);
+
+    const actions = document.createElement("div");
+    actions.className = "edit-actions";
+    const cancelBtn = document.createElement("button");
+    cancelBtn.textContent = "Cancel";
+    const saveBtn = document.createElement("button");
+    saveBtn.className = "primary";
+    saveBtn.textContent = "Save";
+    actions.appendChild(cancelBtn);
+    actions.appendChild(saveBtn);
+    card.appendChild(actions);
+
+    const exitWithoutChange = () => {
+      const fresh = renderNote(n);
+      card.replaceWith(fresh);
+    };
+
+    const commit = async () => {
+      const newTitle = titleInput.value.trim();
+      const newBody = bodyArea.value.trim();
+      const oldTitle = (n.title || "").trim();
+      const oldBody = (n.body || "").trim();
+      if (newTitle === oldTitle && newBody === oldBody) {
+        exitWithoutChange();
+        return;
+      }
+      saveBtn.disabled = true;
+      const ok = await store.update(n.id, { title: newTitle, body: newBody });
+      saveBtn.disabled = false;
+      if (ok) {
+        n.title = newTitle;
+        n.body = newBody;
+        n.updated_at = new Date().toISOString();
+        const fresh = renderNote(n);
+        card.replaceWith(fresh);
+        // Update cache so the next reload shows the new content
+        invalidateCache();
+      }
+    };
+
+    cancelBtn.onclick = (e) => { e.stopPropagation(); exitWithoutChange(); };
+    saveBtn.onclick = (e) => { e.stopPropagation(); commit(); };
+
+    const onKey = (e) => {
+      if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); commit(); }
+      else if (e.key === "Escape") { e.preventDefault(); exitWithoutChange(); }
+    };
+    titleInput.addEventListener("keydown", onKey);
+    bodyArea.addEventListener("keydown", onKey);
+
+    // Focus body, place cursor at end
+    setTimeout(() => {
+      bodyArea.focus();
+      bodyArea.setSelectionRange(bodyArea.value.length, bodyArea.value.length);
+      grow();
+    }, 0);
+  };
+
+  const invalidateCache = () => {
+    if (USER_ID) try { localStorage.removeItem(cacheKey()); } catch {}
+  };
+
   const setCount = () => {
-    const shown = Math.min(state.offset + PAGE_SIZE, state.total);
-    countEl.textContent = state.total === 0
-      ? "0 notes"
-      : `Showing ${Math.min(notesEl.children.length, state.total)} of ${state.total}`;
+    const shown = notesEl.children.length;
+    if (state.search) {
+      countEl.textContent = `${shown} match${shown === 1 ? "" : "es"}`;
+    } else if (state.total === 0) {
+      countEl.textContent = "0 notes";
+    } else {
+      // Estimated count from Postgres planner — show with ~ to be honest
+      countEl.textContent = `Showing ${shown} of ~${state.total}`;
+    }
   };
 
   // Load a page; if append=false, replace the list
@@ -564,14 +739,35 @@
     if (!append) notesEl.innerHTML = "";
     for (const n of rows) notesEl.appendChild(renderNote(n));
     emptyEl.hidden = state.total > 0 || notesEl.children.length > 0;
-    loadMoreBtn.hidden = notesEl.children.length >= state.total;
+    // For search (no count), use rows.length as a hint
+    loadMoreBtn.hidden = state.search
+      ? rows.length < PAGE_SIZE
+      : notesEl.children.length >= state.total;
     setCount();
+    // Cache only the unfiltered first page
+    if (!append && !state.search && state.offset === 0) {
+      saveCache(rows, total);
+    }
   };
 
   // Refresh from offset 0 (e.g. after add/delete/search/filter change)
   const refresh = async () => {
     state.offset = 0;
     await loadPage({ append: false });
+  };
+
+  // Render cached notes immediately (no network) — called on auth-ready.
+  const renderFromCache = () => {
+    const cached = loadCache();
+    if (!cached || !cached.rows || !cached.rows.length) return false;
+    state.total = cached.total;
+    state.offset = 0;
+    notesEl.innerHTML = "";
+    for (const n of cached.rows) notesEl.appendChild(renderNote(n));
+    emptyEl.hidden = true;
+    loadMoreBtn.hidden = cached.rows.length >= cached.total;
+    setCount();
+    return true;
   };
 
   loadMoreBtn.onclick = async () => {
@@ -677,8 +873,9 @@
     notesEl.innerHTML = "";
   });
 
-  const onSession = async (session) => {
+  const onSession = async (session, { freshLogin = false } = {}) => {
     if (session && session.user) {
+      const previousUserId = USER_ID;
       USER_ID = session.user.id;
       USER_EMAIL = session.user.email;
       userEmailEl.textContent = USER_EMAIL;
@@ -697,7 +894,16 @@
         history.replaceState({}, "", location.pathname);
       }
       bodyEl.focus();
-      await refresh();
+
+      // Stale-while-revalidate: paint cache instantly (if any), then refresh.
+      // On a fresh login or user switch, skip cache to avoid showing stale.
+      const showedCache = (!freshLogin && previousUserId === USER_ID) && renderFromCache();
+      if (showedCache) {
+        // Refresh in background — UI is already responsive.
+        refresh().catch(console.error);
+      } else {
+        await refresh();
+      }
     } else {
       USER_ID = null;
       USER_EMAIL = null;
