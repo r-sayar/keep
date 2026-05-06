@@ -8,6 +8,25 @@
 <link rel="icon" href="/icon.svg" type="image/svg+xml" />
 <link rel="apple-touch-icon" href="/icon.svg" />
 <title>Keep</title>
+<script>
+  // Synchronous auth bootstrap — sets the initial UI state from localStorage
+  // BEFORE the Supabase JS module loads, so the user sees either the composer
+  // (instantly) or the login screen (instantly), never a loading flash.
+  (function () {
+    try {
+      const raw = localStorage.getItem("sb-sywglobxvtxayvelhunb-auth-token");
+      const sess = raw ? JSON.parse(raw) : null;
+      if (sess && sess.user && sess.user.id) {
+        document.documentElement.classList.add("authed");
+        window.__BOOT_USER = sess.user;
+      } else {
+        document.documentElement.classList.add("unauth");
+      }
+    } catch (e) {
+      document.documentElement.classList.add("unauth");
+    }
+  })();
+</script>
 <style>
   :root {
     --bg: #fafafa;
@@ -372,24 +391,17 @@
     padding: 4px 8px;
     font-size: 12px;
   }
-  body.unauth header,
-  body.unauth main,
-  body.loading header,
-  body.loading main { display: none; }
-  body:not(.unauth):not(.loading) #auth-screen { display: none; }
-  body.loading #loading-screen { display: flex; }
-  body:not(.loading) #loading-screen { display: none; }
-  #loading-screen {
-    align-items: center;
-    justify-content: center;
-    height: 100vh;
-    color: var(--muted);
-    font-size: 14px;
-  }
+  /* Bootstrap-driven visibility (set synchronously before Supabase JS loads) */
+  html.unauth body header,
+  html.unauth body main { display: none; }
+  html.authed body #auth-screen { display: none; }
+  /* Hide everything by default until bootstrap class is set */
+  html:not(.authed):not(.unauth) #auth-screen,
+  html:not(.authed):not(.unauth) header,
+  html:not(.authed):not(.unauth) main { display: none; }
 </style>
 </head>
-<body class="loading">
-  <div id="loading-screen">Loading…</div>
+<body>
   <div id="auth-screen" class="auth-wrap">
     <h2>Ke<span>e</span>p</h2>
     <p>Sign in with your email — we'll send you a one-tap login link.</p>
@@ -867,54 +879,65 @@
 
   logoutBtn.addEventListener("click", async () => {
     await supabase.auth.signOut();
-    USER_ID = null;
-    USER_EMAIL = null;
-    document.body.classList.add("unauth");
-    notesEl.innerHTML = "";
+    showAuth();
   });
 
-  const onSession = async (session, { freshLogin = false } = {}) => {
-    if (session && session.user) {
-      const previousUserId = USER_ID;
-      USER_ID = session.user.id;
-      USER_EMAIL = session.user.email;
-      userEmailEl.textContent = USER_EMAIL;
-      document.body.classList.remove("unauth", "loading");
+  const showAuth = () => {
+    USER_ID = null;
+    USER_EMAIL = null;
+    document.documentElement.classList.remove("authed");
+    document.documentElement.classList.add("unauth");
+    notesEl.innerHTML = "";
+  };
 
-      // Share-target deep link
-      const params = new URLSearchParams(location.search);
-      const sharedText = params.get("text") || params.get("body");
-      const sharedTitle = params.get("title");
-      if (sharedText || sharedTitle) {
-        if (sharedTitle) titleEl.value = sharedTitle;
-        if (sharedText) {
-          bodyEl.value = sharedText;
-          autoGrow(bodyEl);
-        }
-        history.replaceState({}, "", location.pathname);
+  const showMain = (user) => {
+    USER_ID = user.id;
+    USER_EMAIL = user.email;
+    userEmailEl.textContent = USER_EMAIL;
+    document.documentElement.classList.remove("unauth");
+    document.documentElement.classList.add("authed");
+
+    // Share-target deep link
+    const params = new URLSearchParams(location.search);
+    const sharedText = params.get("text") || params.get("body");
+    const sharedTitle = params.get("title");
+    if (sharedText || sharedTitle) {
+      if (sharedTitle) titleEl.value = sharedTitle;
+      if (sharedText) {
+        bodyEl.value = sharedText;
+        autoGrow(bodyEl);
       }
-      bodyEl.focus();
+      history.replaceState({}, "", location.pathname);
+    }
+    bodyEl.focus();
+  };
 
-      // Stale-while-revalidate: paint cache instantly (if any), then refresh.
-      // On a fresh login or user switch, skip cache to avoid showing stale.
-      const showedCache = (!freshLogin && previousUserId === USER_ID) && renderFromCache();
-      if (showedCache) {
-        // Refresh in background — UI is already responsive.
-        refresh().catch(console.error);
+  // === Synchronous bootstrap path ===
+  // The inline <script> in <head> already set <html class="authed"> or "unauth"
+  // and stashed the user on window.__BOOT_USER. Render cache + show UI now.
+  const BOOT = window.__BOOT_USER;
+  if (BOOT) {
+    showMain(BOOT);
+    renderFromCache(); // instant paint from localStorage if available
+  }
+
+  const onSession = async (session) => {
+    if (session && session.user) {
+      const wasSameUser = USER_ID === session.user.id;
+      showMain(session.user);
+      if (wasSameUser) {
+        refresh().catch(console.error); // background refresh, UI already up
       } else {
         await refresh();
       }
     } else {
-      USER_ID = null;
-      USER_EMAIL = null;
-      document.body.classList.remove("loading");
-      document.body.classList.add("unauth");
+      showAuth();
     }
   };
 
-  // Initial session check (handles magic-link callback in URL hash too)
-  const { data: { session } } = await supabase.auth.getSession();
-  await onSession(session);
+  // Validate the session async (might refresh tokens, log out if expired).
+  // Don't await before the user can interact — bootstrap already showed UI.
+  supabase.auth.getSession().then(({ data: { session } }) => onSession(session));
 
   // React to sign-in/out events
   supabase.auth.onAuthStateChange((_event, session) => {
